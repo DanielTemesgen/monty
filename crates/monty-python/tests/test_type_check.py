@@ -8,12 +8,21 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any, get_args
 
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_monty import Monty, MontyError, MontyRuntimeError, MontySession, MontyTypingError, TypeCheckFormat
+from pydantic_monty import (
+    Monty,
+    MontyError,
+    MontyRuntimeError,
+    MontySession,
+    MontyTypingError,
+    MountDir,
+    TypeCheckFormat,
+)
 
 
 @pytest.fixture
@@ -21,6 +30,21 @@ def tc_session(pool: Monty) -> Iterator[MontySession]:
     """A fresh session with type checking enabled."""
     with pool.checkout(type_check=True) as s:
         yield s
+
+
+def test_type_check_open_and_run(pool: Monty, tmp_path: Path):
+    """Builtin open has type information and writes through a mounted directory."""
+    code = """\
+with open('/work/example.txt', 'w') as output:
+    output.write('hello')
+"""
+    mount = MountDir(host_path=tmp_path, virtual_path='/work', mode='read-write')
+
+    with pool.checkout(type_check=True) as session:
+        result = session.feed_run(code, mount=mount)
+
+    assert result is None
+    assert (tmp_path / 'example.txt').read_text() == snapshot('hello')
 
 
 # === Basic type checking ===

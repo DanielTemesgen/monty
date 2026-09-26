@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import reveal_type
 
 # === Core types ===
@@ -54,6 +55,24 @@ reveal_type(TimeoutError())
 reveal_type(TypeError())
 reveal_type(ValueError())
 reveal_type(StopIteration())
+
+# === open ===
+reveal_type(open('/work/default.txt'))
+reveal_type(open('/work/example.txt', 'tr', encoding='UTF-8'))
+reveal_type(open('/work/read.bin', 'br'))
+reveal_type(open('/work/write.bin', 'ba'))
+
+path = Path('/work/example.txt')
+reveal_type(path.open())
+reveal_type(path.open('tw', encoding='utf8'))
+reveal_type(path.open('b'))
+reveal_type(path.open('bw'))
+
+
+def reveal_dynamic_open(mode: str) -> None:
+    reveal_type(open('/work/dynamic', mode))
+    reveal_type(path.open(mode))
+
 
 # fmt: off
 # === datetime types ===
