@@ -174,7 +174,7 @@ def test_type_check_default_allows_run_with_inputs(pool: Monty):
         assert session.feed_run('x + 1', inputs={'x': 5}) == 6
 
 
-def test_type_check_open_and_run(pool: Monty, tmp_path: Path):
+def test_type_check_open_and_run(tc_session: MontySession, tmp_path: Path):
     """Builtin open has type information and writes through a mounted directory."""
     code = """\
 with open('/work/example.txt', 'w') as output:
@@ -182,8 +182,7 @@ with open('/work/example.txt', 'w') as output:
 """
     mount = MountDir(host_path=tmp_path, virtual_path='/work', mode='read-write')
 
-    with pool.checkout(type_check=True) as session:
-        result = session.feed_run(code, mount=mount)
+    result = tc_session.feed_run(code, mount=mount)
 
     assert result == snapshot(None)
     assert (tmp_path / 'example.txt').read_text() == snapshot('hello')

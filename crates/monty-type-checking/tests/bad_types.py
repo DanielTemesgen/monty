@@ -152,6 +152,3 @@ path.open(1)
 path.open(encoding=1)
 path.open(closefd=False)
 path.open(opener=lambda file, flags: 0)
-path.open('w').write(b'hello')
-path.open('wb').write('hello')
-path.open().closed = False

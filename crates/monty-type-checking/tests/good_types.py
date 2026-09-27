@@ -9,6 +9,7 @@ import re
 import sys
 from collections.abc import Iterator
 from dataclasses import dataclass
+from io import BufferedReader, BufferedWriter, TextIOWrapper
 from pathlib import Path
 from typing import Any, TextIO, assert_type
 
@@ -673,15 +674,19 @@ def open_with(file: str, mode: str, encoding: str, buffering: int) -> None:
 
 try:
     with open('/work/example.txt', 'w') as text_output:
+        assert_type(text_output, TextIOWrapper)
         text_output.write('hello')
         write_line(text_output, 'world')
     with open('/work/example.bin', 'rb') as binary_input:
-        binary_input.read()
+        assert_type(binary_input, BufferedReader)
+        assert_type(binary_input.read(), bytes)
     with open('/work/example.bin', 'wb') as binary_output:
+        assert_type(binary_output, BufferedWriter)
         binary_output.write(b'hello')
     with open('/work/example.txt', encoding='UTF-8') as encoded_input:
-        encoded_input.readlines()
+        assert_type(encoded_input.readlines(), list[str])
     with Path('/work/example.txt').open('w') as path_output:
+        assert_type(path_output, TextIOWrapper)
         path_output.write('hello')
 except FileNotFoundError:
     pass

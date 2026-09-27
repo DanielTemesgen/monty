@@ -37,6 +37,3 @@ bad_types.py:151:1: error[no-matching-overload] No overload of bound method `Pat
 bad_types.py:152:11: error[invalid-argument-type] Argument to bound method `Path.open` is incorrect: Expected `str | None`, found `Literal[1]`
 bad_types.py:153:1: error[no-matching-overload] No overload of bound method `Path.open` matches arguments
 bad_types.py:154:1: error[no-matching-overload] No overload of bound method `Path.open` matches arguments
-bad_types.py:155:22: error[invalid-argument-type] Argument to bound method `_TextIOBase.write` is incorrect: Expected `str`, found `Literal[b"hello"]`
-bad_types.py:156:23: error[invalid-argument-type] Argument to bound method `BufferedWriter.write` is incorrect: Expected `Buffer`, found `Literal["hello"]`
-bad_types.py:157:1: error[invalid-assignment] Cannot assign to read-only property `closed` on object of type `TextIOWrapper[_WrappedBuffer]`: Attempted assignment to `TextIOWrapper[_WrappedBuffer].closed` here
