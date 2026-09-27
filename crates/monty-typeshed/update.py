@@ -93,6 +93,12 @@ ALLOWED_CLASSES = {
     'NameError',
     'SyntaxError',
     'OSError',
+    # OSError subclasses raised by `open()` and the other filesystem calls
+    'FileExistsError',
+    'FileNotFoundError',
+    'IsADirectoryError',
+    'NotADirectoryError',
+    'PermissionError',
     'TimeoutError',
     'TypeError',
     'ValueError',
@@ -142,6 +148,9 @@ COPY_FILES = [
     'datetime.pyi',
     # Monty implements every `itertools` callable
     'itertools.pyi',
+    # the file classes `open()` returns; `io` re-exports them from `_io`
+    'io.pyi',
+    '_io.pyi',
     # narrowed to Monty's surface by custom/random.pyi
     'random.pyi',
 ]
@@ -153,6 +162,7 @@ VERSIONS = """\
 # which monty's minimimal typeshed includes
 
 _collections_abc: 3.3-
+_io: 3.0-  # not importable at runtime, only for type checking
 _typeshed: 3.0-  # not present at runtime, only for type checking
 abc: 3.0-  # not importable at runtime, only for type checking
 asyncio: 3.4-
@@ -164,8 +174,8 @@ copy: 3.0-
 dataclasses: 3.7-
 datetime: 3.0-
 functools: 3.0-
+io: 3.0-  # not importable at runtime, only for type checking
 itertools: 3.0-
-io: 3.0-
 json: 3.0-
 math: 3.0-
 os: 3.0-
@@ -382,11 +392,10 @@ def main() -> int:
     # land inside their package rather than flattening onto the stdlib root.
     # `rglob` (not `glob`) is required for nested packages.
     custom_count = 0
-    for file in sorted(CUSTOM_DIR.rglob('*.pyi')):
-        relative_path = file.relative_to(CUSTOM_DIR)
-        destination = STDLIB_DIR / relative_path
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(file, destination)
+    for file in CUSTOM_DIR.rglob('*.pyi'):
+        dest_file = STDLIB_DIR / file.relative_to(CUSTOM_DIR)
+        dest_file.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(file, dest_file)
         custom_count += 1
     print(f'Copied {custom_count} custom typeshed files')
 

@@ -1,12 +1,17 @@
 import sys
 import types
 from collections.abc import Callable, Generator, Iterator, Sequence
-from io import BufferedReader, BufferedWriter, TextIOWrapper
+from io import BufferedRandom, BufferedReader, BufferedWriter, FileIO, TextIOWrapper
 from os import PathLike, stat_result
 from types import GenericAlias, TracebackType
-from typing import Any, ClassVar, Literal, TypeAlias, TypeVar, overload
+from typing import IO, Any, BinaryIO, ClassVar, Literal, TypeVar, overload
 
 from _typeshed import (
+    OpenBinaryMode,
+    OpenBinaryModeReading,
+    OpenBinaryModeUpdating,
+    OpenBinaryModeWriting,
+    OpenTextMode,
     ReadableBuffer,
     StrOrBytesPath,
     StrPath,
@@ -15,10 +20,6 @@ from _typeshed import (
 from typing_extensions import Never, Self, deprecated
 
 _PathT = TypeVar('_PathT', bound=PurePath)
-_OpenTextMode: TypeAlias = Literal['r', 'w', 'a', 't', 'rt', 'tr', 'wt', 'tw', 'at', 'ta']
-_OpenBinaryReadMode: TypeAlias = Literal['b', 'rb', 'br']
-_OpenBinaryWriteMode: TypeAlias = Literal['wb', 'bw', 'ab', 'ba']
-_OpenFile: TypeAlias = TextIOWrapper | BufferedReader | BufferedWriter
 
 __all__ = ['PurePath', 'PurePosixPath', 'PureWindowsPath', 'Path', 'PosixPath', 'WindowsPath']
 
@@ -243,50 +244,76 @@ class Path(PurePath):
         @overload
         def copy(self, target: StrPath, *, follow_symlinks: bool = True, preserve_metadata: bool = False) -> Self: ...  # type: ignore[overload-overlap]
 
+    # Adapted from builtins.open
+    # Text mode: always returns a TextIOWrapper
+    # The Traversable .open in stdlib/importlib/abc.pyi should be kept in sync with this.
     @overload
     def open(
         self,
-        mode: _OpenTextMode = 'r',
-        buffering: Literal[-1] = -1,
+        mode: OpenTextMode = 'r',
+        buffering: int = -1,
         encoding: str | None = None,
-        errors: None = None,
-        newline: None = None,
-        closefd: Literal[True] = True,
-        opener: None = None,
+        errors: str | None = None,
+        newline: str | None = None,
     ) -> TextIOWrapper: ...
+    # Unbuffered binary mode: returns a FileIO
     @overload
     def open(
         self,
-        mode: _OpenBinaryReadMode,
-        buffering: Literal[-1] = -1,
-        encoding: str | None = None,
+        mode: OpenBinaryMode,
+        buffering: Literal[0],
+        encoding: None = None,
         errors: None = None,
         newline: None = None,
-        closefd: Literal[True] = True,
-        opener: None = None,
-    ) -> BufferedReader: ...
+    ) -> FileIO: ...
+    # Buffering is on: return BufferedRandom, BufferedReader, or BufferedWriter
     @overload
     def open(
         self,
-        mode: _OpenBinaryWriteMode,
-        buffering: Literal[-1] = -1,
-        encoding: str | None = None,
+        mode: OpenBinaryModeUpdating,
+        buffering: Literal[-1, 1] = -1,
+        encoding: None = None,
         errors: None = None,
         newline: None = None,
-        closefd: Literal[True] = True,
-        opener: None = None,
+    ) -> BufferedRandom: ...
+    @overload
+    def open(
+        self,
+        mode: OpenBinaryModeWriting,
+        buffering: Literal[-1, 1] = -1,
+        encoding: None = None,
+        errors: None = None,
+        newline: None = None,
     ) -> BufferedWriter: ...
     @overload
     def open(
         self,
-        mode: str,
-        buffering: Literal[-1] = -1,
-        encoding: str | None = None,
+        mode: OpenBinaryModeReading,
+        buffering: Literal[-1, 1] = -1,
+        encoding: None = None,
         errors: None = None,
         newline: None = None,
-        closefd: Literal[True] = True,
-        opener: None = None,
-    ) -> _OpenFile: ...
+    ) -> BufferedReader: ...
+    # Buffering cannot be determined: fall back to BinaryIO
+    @overload
+    def open(
+        self,
+        mode: OpenBinaryMode,
+        buffering: int = -1,
+        encoding: None = None,
+        errors: None = None,
+        newline: None = None,
+    ) -> BinaryIO: ...
+    # Fallback if mode is not specified
+    @overload
+    def open(
+        self,
+        mode: str,
+        buffering: int = -1,
+        encoding: str | None = None,
+        errors: str | None = None,
+        newline: str | None = None,
+    ) -> IO[Any]: ...
 
     # These methods do "exist" on Windows, but they always raise NotImplementedError.
     if sys.platform == 'win32':

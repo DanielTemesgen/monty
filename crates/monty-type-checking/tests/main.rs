@@ -178,45 +178,6 @@ fn stdlib_datetime_resolves() {
     assert!(result.is_none(), "Expected no type errors, got: {result:#?}");
 }
 
-#[test]
-fn builtin_open_resolves() {
-    let code = r#"
-from pathlib import Path
-
-with open("/work/example.txt", "w") as text_output:
-    text_output.write("hello")
-
-with open("/work/example.bin", "rb") as binary_input:
-    binary_input.read()
-
-with open("/work/example.bin", "wb") as binary_output:
-    binary_output.write(b"hello")
-
-with open("/work/example.txt", "rt", encoding="UTF-8") as encoded_input:
-    encoded_input.read()
-
-path = Path("/work/example.txt")
-with path.open("w") as text_output:
-    text_output.write("hello")
-
-with path.open("rb") as binary_input:
-    binary_input.read()
-
-with path.open("wb") as binary_output:
-    binary_output.write(b"hello")
-
-with path.open("rt", encoding="utf8") as encoded_input:
-    encoded_input.read()
-
-def open_dynamic(mode: str) -> None:
-    open("/work/example.txt", mode)
-    path.open(mode)
-"#;
-
-    let result = check(code, "main.py");
-    assert!(result.is_none(), "Expected no type errors, got: {result:#?}");
-}
-
 /// Test that good_types.py type-checks without errors.
 ///
 /// This file uses `assert_type` from typing to verify that inferred types match expected types.

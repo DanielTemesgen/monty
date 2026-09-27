@@ -3,11 +3,12 @@ import sys
 import types
 from _collections_abc import dict_items, dict_keys, dict_values
 from collections.abc import Awaitable, Callable, Iterable, Iterator, MutableSet, Reversible, Set as AbstractSet, Sized
-from io import BufferedReader, BufferedWriter, TextIOWrapper
-from os import PathLike
+from io import BufferedRandom, BufferedReader, BufferedWriter, FileIO, TextIOWrapper
 from types import CellType, CodeType, GenericAlias, TracebackType
 from typing import (
+    IO,
     Any,
+    BinaryIO,
     ClassVar,
     Final,
     Generic,
@@ -31,6 +32,12 @@ from _typeshed import (
     AnnotationForm,
     ConvertibleToFloat,
     ConvertibleToInt,
+    FileDescriptorOrPath,
+    OpenBinaryMode,
+    OpenBinaryModeReading,
+    OpenBinaryModeUpdating,
+    OpenBinaryModeWriting,
+    OpenTextMode,
     ReadableBuffer,
     SupportsAdd,
     SupportsAnext,
@@ -1155,55 +1162,85 @@ def next(i: SupportsNext[_T], /) -> _T: ...
 def next(i: SupportsNext[_T], default: _VT, /) -> _T | _VT: ...
 def oct(number: SupportsIndex, /) -> str: ...
 
-_OpenTextMode: TypeAlias = Literal['r', 'w', 'a', 't', 'rt', 'tr', 'wt', 'tw', 'at', 'ta']
-_OpenBinaryReadMode: TypeAlias = Literal['b', 'rb', 'br']
-_OpenBinaryWriteMode: TypeAlias = Literal['wb', 'bw', 'ab', 'ba']
-_OpenFile: TypeAlias = TextIOWrapper | BufferedReader | BufferedWriter
+_Opener: TypeAlias = Callable[[str, int], int]
 
 @overload
 def open(
-    file: str | bytes | PathLike[str],
-    mode: _OpenTextMode = 'r',
-    buffering: Literal[-1] = -1,
+    file: FileDescriptorOrPath,
+    mode: OpenTextMode = 'r',
+    buffering: int = -1,
     encoding: str | None = None,
-    errors: None = None,
-    newline: None = None,
-    closefd: Literal[True] = True,
-    opener: None = None,
+    errors: str | None = None,
+    newline: str | None = None,
+    closefd: bool = True,
+    opener: _Opener | None = None,
 ) -> TextIOWrapper: ...
 @overload
 def open(
-    file: str | bytes | PathLike[str],
-    mode: _OpenBinaryReadMode,
-    buffering: Literal[-1] = -1,
-    encoding: str | None = None,
+    file: FileDescriptorOrPath,
+    mode: OpenBinaryMode,
+    buffering: Literal[0],
+    encoding: None = None,
     errors: None = None,
     newline: None = None,
-    closefd: Literal[True] = True,
-    opener: None = None,
-) -> BufferedReader: ...
+    closefd: bool = True,
+    opener: _Opener | None = None,
+) -> FileIO: ...
 @overload
 def open(
-    file: str | bytes | PathLike[str],
-    mode: _OpenBinaryWriteMode,
-    buffering: Literal[-1] = -1,
-    encoding: str | None = None,
+    file: FileDescriptorOrPath,
+    mode: OpenBinaryModeUpdating,
+    buffering: Literal[-1, 1] = -1,
+    encoding: None = None,
     errors: None = None,
     newline: None = None,
-    closefd: Literal[True] = True,
-    opener: None = None,
+    closefd: bool = True,
+    opener: _Opener | None = None,
+) -> BufferedRandom: ...
+@overload
+def open(
+    file: FileDescriptorOrPath,
+    mode: OpenBinaryModeWriting,
+    buffering: Literal[-1, 1] = -1,
+    encoding: None = None,
+    errors: None = None,
+    newline: None = None,
+    closefd: bool = True,
+    opener: _Opener | None = None,
 ) -> BufferedWriter: ...
 @overload
 def open(
-    file: str | bytes | PathLike[str],
-    mode: str,
-    buffering: Literal[-1] = -1,
-    encoding: str | None = None,
+    file: FileDescriptorOrPath,
+    mode: OpenBinaryModeReading,
+    buffering: Literal[-1, 1] = -1,
+    encoding: None = None,
     errors: None = None,
     newline: None = None,
-    closefd: Literal[True] = True,
-    opener: None = None,
-) -> _OpenFile: ...
+    closefd: bool = True,
+    opener: _Opener | None = None,
+) -> BufferedReader: ...
+@overload
+def open(
+    file: FileDescriptorOrPath,
+    mode: OpenBinaryMode,
+    buffering: int = -1,
+    encoding: None = None,
+    errors: None = None,
+    newline: None = None,
+    closefd: bool = True,
+    opener: _Opener | None = None,
+) -> BinaryIO: ...
+@overload
+def open(
+    file: FileDescriptorOrPath,
+    mode: str,
+    buffering: int = -1,
+    encoding: str | None = None,
+    errors: str | None = None,
+    newline: str | None = None,
+    closefd: bool = True,
+    opener: _Opener | None = None,
+) -> IO[Any]: ...
 def ord(c: str | bytes | bytearray, /) -> int: ...
 
 @type_check_only
@@ -1533,6 +1570,11 @@ class OverflowError(ArithmeticError): ...
 class ZeroDivisionError(ArithmeticError): ...
 class IndexError(LookupError): ...
 class KeyError(LookupError): ...
+class FileExistsError(OSError): ...
+class FileNotFoundError(OSError): ...
+class IsADirectoryError(OSError): ...
+class NotADirectoryError(OSError): ...
+class PermissionError(OSError): ...
 class TimeoutError(OSError): ...
 class NotImplementedError(RuntimeError): ...
 class RecursionError(RuntimeError): ...

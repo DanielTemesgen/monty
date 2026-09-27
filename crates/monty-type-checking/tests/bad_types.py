@@ -1,6 +1,5 @@
 # This file contains intentional type errors to test the type checker.
 # Each section demonstrates a different category of type error.
-# ===
 
 import sys
 from pathlib import Path
@@ -107,6 +106,7 @@ takes_two(a=1, c='wrong')
 not_callable: int = 42
 not_callable()
 
+
 # === Errors on loop variables ===
 # The loop variable's element type comes through `Iterator.__next__`, which is
 # `@abstractmethod`; without `abc` in the stub tree it is `Unknown` and none of
@@ -137,26 +137,19 @@ print(sys.missing)
 
 
 # === Invalid open calls ===
+# Non-default `buffering`, `errors` and the like are left to the runtime to reject,
+# since a variable holding the default must still type-check.
 
 open()
-open(1)
 open('/work/example.txt', 1)
-open('/work/example.txt', buffering=0)
 open('/work/example.txt', encoding=1)
-open('/work/example.txt', errors='strict')
-open('/work/example.txt', newline='\n')
-open('/work/example.txt', closefd=False)
-open('/work/example.txt', opener=lambda path, flags: 0)
 open('/work/example.txt', 'w').write(b'hello')
 open('/work/example.bin', 'wb').write('hello')
 open('/work/example.txt').closed = False
 
 path = Path('/work/example.txt')
 path.open(1)
-path.open(buffering=0)
 path.open(encoding=1)
-path.open(errors='strict')
-path.open(newline='\n')
 path.open(closefd=False)
 path.open(opener=lambda file, flags: 0)
 path.open('w').write(b'hello')
