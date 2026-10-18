@@ -11,13 +11,6 @@ fn get_parse_err(code: impl Into<String>) -> MontyException {
 }
 
 #[test]
-fn complex_numbers_return_not_implemented_error() {
-    let err = get_parse_err("1 + 2j");
-    assert_eq!(err.exc_type(), ExcType::NotImplementedError);
-    assert_snapshot!(err.message().unwrap(), @"The monty syntax parser does not yet support complex constants");
-}
-
-#[test]
 fn yield_expressions_return_not_implemented_error() {
     let err = get_parse_err("def foo():\n    yield 1");
     assert_eq!(err.exc_type(), ExcType::NotImplementedError);
@@ -221,13 +214,13 @@ fn async_with_statement_returns_not_implemented_error() {
 #[test]
 fn error_display_format() {
     // Verify the Display format matches Python's exception output with traceback
-    let err = get_parse_err("1 + 2j");
+    let err = get_parse_err("type Alias = int");
     assert_snapshot!(err, @r#"
     Traceback (most recent call last):
       File "test.py", line 1, in <module>
-        1 + 2j
-            ~~
-    NotImplementedError: The monty syntax parser does not yet support complex constants
+        type Alias = int
+        ~~~~~~~~~~~~~~~~
+    NotImplementedError: The monty syntax parser does not yet support type aliases
     "#);
 }
 
@@ -583,23 +576,6 @@ fn deeply_nested_boolean_or_exceed_limit() {
     let err = get_parse_err(code);
     assert_eq!(err.exc_type(), ExcType::SyntaxError);
     assert_snapshot!(err.message().unwrap(), @"Source is too deeply nested");
-}
-
-// === Runtime NotImplementedError tests ===
-// These test that unimplemented features return proper errors instead of panicking.
-
-/// Helper to run code and get the exception from a runtime error.
-fn run_and_get_err(code: &str) -> MontyException {
-    let mut runner =
-        MontyRun::new(code.to_owned(), "test.py", vec![], CompileOptions::default()).expect("should parse");
-    runner.run_no_limits(vec![]).expect_err("expected runtime error")
-}
-
-#[test]
-fn matrix_multiplication_returns_not_implemented_error() {
-    // The @ operator (matrix multiplication) is not supported at runtime
-    let err = run_and_get_err("1 @ 2");
-    assert_eq!(err.exc_type(), ExcType::NotImplementedError);
 }
 
 #[test]
@@ -983,6 +959,18 @@ fn module_with_too_many_interned_strings_returns_syntax_error() {
         err.message(),
         Some("module has too many distinct names; the bytecode format supports up to 65536 interned strings"),
     );
+}
+
+#[test]
+fn dotted_import_with_too_many_components_returns_syntax_error() {
+    // each component interns the path through it, so the chain is capped
+    let code = format!("import a{}", ".a".repeat(32));
+    let result = MontyRun::new(code, "test.py", vec![], CompileOptions::default());
+    let err = result.expect_err("expected compile error");
+    assert_eq!(err.exc_type(), ExcType::SyntaxError);
+    assert_eq!(err.message(), Some("dotted import has more than 32 components"));
+    let code = format!("from a{} import b", ".a".repeat(31));
+    MontyRun::new(code, "test.py", vec![], CompileOptions::default()).expect("32 components compile");
 }
 
 #[test]

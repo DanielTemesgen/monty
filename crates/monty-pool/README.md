@@ -217,6 +217,8 @@ A local subprocess claiming shutdown is a protocol violation.
 
 A remote that supports persistence names sessions with an opaque ID, `Checkout::session_id`;
 `ReplConfig::persistence` asks it to store the session or not, and subprocess workers ignore both.
+`ReplConfig::profile` names a server-side profile to run the session under; it is sent in `Configure` as-is, and
+subprocess workers ignore it too.
 `Checkout::restore` can accept this ID instead of dump bytes to restore a session's state after a disconnect, whether
 intentional or due to parking from e.g. an idle timeout or a remote restart.
 The remote is free to determine what `Checkout::restore` will do, for example it may lock the existing session to
@@ -231,6 +233,9 @@ It returns the original `PoolError::Shutdown` if the shutdown named nothing to l
 if the new session is not in the state the old one was in at the shutdown.
 The redial reuses the checkout's original upgrade headers, so a short-lived token in them can make the resume fail.
 A bare disconnect is never resumed, since the request may have run.
+
+Before type checking a feed, `import_stubs` requests host module stubs once per module per session.
+Answer with a dict of dotted module paths to `.pyi` source or `None`, or `NotHandled` for no stubs.
 
 ## Monty crates
 

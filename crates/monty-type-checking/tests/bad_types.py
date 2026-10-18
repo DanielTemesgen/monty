@@ -1,7 +1,9 @@
 # This file contains intentional type errors to test the type checker.
 # Each section demonstrates a different category of type error.
 
+import hashlib
 import sys
+import tomllib
 from pathlib import Path
 from typing import TypedDict, assert_type
 
@@ -134,6 +136,11 @@ def loop_over_dict_items(mapping: dict[str, int]) -> None:
 
 
 print(sys.missing)
+hashlib.file_digest
+hashlib.sha256('text')
+tomllib.loads(b'a = 1')
+tomllib.load('pyproject.toml')
+tomllib.loads('a = 1', parse_float=float)
 
 
 # === Invalid open calls ===

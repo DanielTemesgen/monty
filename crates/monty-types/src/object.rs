@@ -29,7 +29,7 @@ use crate::{
     builtins::BuiltinsFunctions,
     exceptions::ExcType,
     file_mode::FileMode,
-    format::{FormatFloat, StringRepr, bytes_repr_fmt, format_offset_timedelta_repr, string_repr_fmt},
+    format::{FormatComplex, FormatFloat, StringRepr, bytes_repr_fmt, format_offset_timedelta_repr, string_repr_fmt},
     graph::{ClassTypeNode, GraphError, MontyGraph, MontyNode, NodeId},
     resource::ResourceError,
     unstable::PushValue,
@@ -107,6 +107,12 @@ impl MontyObject {
     #[must_use]
     pub fn float(value: f64) -> Self {
         Self::leaf(MontyNode::Float(value))
+    }
+
+    /// A `complex` from its real and imaginary parts.
+    #[must_use]
+    pub fn complex(real: f64, imag: f64) -> Self {
+        Self::leaf(MontyNode::Complex(MontyComplex { real, imag }))
     }
 
     /// A `str`.
@@ -298,6 +304,20 @@ impl MontyObject {
         Self { graph, root }
     }
 
+    /// A host module named `name` with its attributes, identified by `id`;
+    /// it imports as a `module` object in the sandbox.
+    #[must_use]
+    pub fn module(name: impl Into<String>, id: MontyUuid, attrs: impl IntoIterator<Item = (Self, Self)>) -> Self {
+        let mut graph = MontyGraph::new();
+        let attrs = push_pairs(attrs, &mut graph);
+        let root = graph.push(MontyNode::Module {
+            name: name.into(),
+            id,
+            attrs,
+        });
+        Self { graph, root }
+    }
+
     /// Resolves a builtin function by its Python name (e.g. `"len"`), the
     /// name its `Display` renders.
     #[must_use]
@@ -449,12 +469,14 @@ impl<'a> ObjectRef<'a> {
         }
     }
 
-    /// The `(key, value)` pairs of a dict, or the eager attrs of a class
-    /// instance or class type object; `None` for any other value.
+    /// The `(key, value)` pairs of a dict, or the attrs of a class instance,
+    /// class type object or module; `None` for any other value.
     #[must_use]
     pub fn pairs(&self) -> Option<Vec<(Self, Self)>> {
         let pairs = match self.node() {
-            MontyNode::Dict(pairs) | MontyNode::ClassInstance { attrs: pairs, .. } => pairs,
+            MontyNode::Dict(pairs)
+            | MontyNode::ClassInstance { attrs: pairs, .. }
+            | MontyNode::Module { attrs: pairs, .. } => pairs,
             MontyNode::ClassType(class) => &class.attrs,
             _ => return None,
         };
@@ -494,13 +516,26 @@ impl<'a> ObjectRef<'a> {
         }
     }
 
-    /// The value as a `float`; an `int` converts as Python's `float()` does.
+    /// The value as a `float`; an `int` converts as Python's `float()` does,
+    /// with one too large for a float giving `None` where Python overflows.
     #[must_use]
     pub fn as_float(&self) -> Option<f64> {
         match self.node() {
             MontyNode::Float(value) => Some(*value),
             MontyNode::Int(value) => Some(*value as f64),
+            MontyNode::BigInt(value) => value.to_f64().filter(|f| f.is_finite()),
             _ => None,
+        }
+    }
+
+    /// The value as a `complex`; an `int` or `float` converts as Python's
+    /// `complex()` does, with a zero imaginary part (see [`as_float`](Self::as_float)
+    /// for an `int` too large to convert).
+    #[must_use]
+    pub fn as_complex(&self) -> Option<MontyComplex> {
+        match self.node() {
+            MontyNode::Complex(value) => Some(*value),
+            _ => self.as_float().map(|real| MontyComplex { real, imag: 0.0 }),
         }
     }
 
@@ -525,6 +560,7 @@ impl<'a> ObjectRef<'a> {
             MontyNode::Int(i) => *i != 0,
             MontyNode::BigInt(bi) => !bi.is_zero(),
             MontyNode::Float(f) => *f != 0.0,
+            MontyNode::Complex(c) => c.real != 0.0 || c.imag != 0.0,
             MontyNode::String(s) => !s.is_empty(),
             MontyNode::Bytes(b) => !b.is_empty(),
             MontyNode::List(items)
@@ -646,6 +682,14 @@ impl<'a> ObjectRef<'a> {
             MontyNode::Int(v) => write!(f, "{v}"),
             MontyNode::BigInt(v) => write!(f, "{v}"),
             MontyNode::Float(v) => write!(f, "{}", FormatFloat(*v)),
+            MontyNode::Complex(c) => write!(
+                f,
+                "{}",
+                FormatComplex {
+                    real: c.real,
+                    imag: c.imag
+                }
+            ),
             MontyNode::String(s) => string_repr_fmt(s, f),
             MontyNode::Bytes(b) => bytes_repr_fmt(b, f),
             MontyNode::Date(date) => write!(f, "datetime.date({}, {}, {})", date.year, date.month, date.day),
@@ -734,6 +778,8 @@ impl<'a> ObjectRef<'a> {
             MontyNode::ClassType(class) => write!(f, "<class '{}'>", class.name),
             MontyNode::BuiltinFunction(func) => write!(f, "<built-in function {func}>"),
             MontyNode::Function { name, .. } => write!(f, "<function '{name}' external>"),
+            // a module's repr names it without listing its attrs, as CPython's does
+            MontyNode::Module { name, .. } => write!(f, "<module {}>", StringRepr(name)),
             MontyNode::Repr(s) => write!(f, "Repr({})", StringRepr(s)),
             MontyNode::Cycle(placeholder) => f.write_str(placeholder),
             MontyNode::List(_)
@@ -914,6 +960,18 @@ fn nodes_eq(a: &MontyNode, b: &MontyNode, pending: &mut Vec<(NodeId, NodeId)>) -
                 queue_pairs(xs, ys, pending)
             }
         }
+        (
+            MontyNode::Module {
+                name: x_name,
+                id: x_id,
+                attrs: xs,
+            },
+            MontyNode::Module {
+                name: y_name,
+                id: y_id,
+                attrs: ys,
+            },
+        ) => x_name == y_name && x_id == y_id && queue_pairs(xs, ys, pending),
         // every other pairing is leaf against leaf, or a kind mismatch
         _ => a.is_leaf() && b.is_leaf() && a == b,
     }
@@ -975,13 +1033,11 @@ impl CallArgs {
     }
 
     /// The positional arguments, in order.
-    #[must_use]
     pub fn args(&self) -> impl ExactSizeIterator<Item = ObjectRef<'_>> {
         self.arg_ids.iter().map(|id| self.graph.value(*id))
     }
 
     /// The keyword arguments as `(key, value)` views, in order.
-    #[must_use]
     pub fn kwargs(&self) -> impl ExactSizeIterator<Item = (ObjectRef<'_>, ObjectRef<'_>)> {
         self.kwarg_ids
             .iter()
@@ -1058,7 +1114,6 @@ impl NamedValues {
     }
 
     /// The `(name, value)` pairs, in order.
-    #[must_use]
     pub fn iter(&self) -> impl ExactSizeIterator<Item = (&str, ObjectRef<'_>)> {
         self.names
             .iter()
@@ -1190,6 +1245,7 @@ pub enum MontyType {
     Bool,
     Int,
     Float,
+    Complex,
     Range,
     Slice,
     /// The four `datetime` classes carry the qualified names the runtime
@@ -1437,6 +1493,26 @@ pub struct MontyTime {
     pub timezone_name: Option<String>,
     /// Fold flag, 0 or 1.
     pub fold: u8,
+}
+
+/// A Python `complex` value as its two `float` parts.
+///
+/// Compared bit-for-bit inside a graph (see `MontyNode`'s `PartialEq`), so a
+/// `NaN` part round-trips equal and `-0.0` stays distinct from `0.0`.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct MontyComplex {
+    /// The real part.
+    pub real: f64,
+    /// The imaginary part.
+    pub imag: f64,
+}
+
+impl MontyComplex {
+    /// Bit-for-bit equality of both parts.
+    #[must_use]
+    pub fn bits_eq(&self, other: &Self) -> bool {
+        self.real.to_bits() == other.real.to_bits() && self.imag.to_bits() == other.imag.to_bits()
+    }
 }
 
 /// A Python `datetime.timedelta` value representing a duration.

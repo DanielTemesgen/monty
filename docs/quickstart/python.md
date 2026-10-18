@@ -89,9 +89,26 @@ it.
 
 A name present in both is served by the eager `inputs` binding.
 
+`external_modules` on `checkout()` maps import names to [`ExternalModule`][pydantic_monty.ExternalModule] values
+containing the module's public items and an optional type stub, for every feed of the session:
+
+```python
+from pydantic_monty import ExternalModule, Monty
+
+modules = {'tools': ExternalModule({'add': lambda a, b: a + b})}
+code = 'import tools\ntools.add(1, 2)'
+
+with Monty() as pool:
+    with pool.checkout(external_modules=modules) as session:
+        print(session.feed_run(code))
+        #> 3
+```
+
+See [importing host modules](../host-functions.md#importing-host-modules).
+
 ### Which values cross the boundary
 
-`None`, `bool`, `int` (arbitrary precision), `float`, `str`, `bytes`, `list`, `tuple`, `dict`, `set`, `frozenset`,
+`None`, `bool`, `int` (arbitrary precision), `float`, `complex`, `str`, `bytes`, `list`, `tuple`, `dict`, `set`, `frozenset`,
 `Ellipsis`, `NotImplemented`, `datetime.date`, `datetime.datetime`, `datetime.timedelta`, `datetime.timezone`, named
 tuples, exception instances, and the type objects of the data types Monty models (`int`, `str`, `datetime.date`, ...)
 all convert in both directions.
