@@ -94,7 +94,6 @@ ALLOWED_CLASSES = {
     'NameError',
     'SyntaxError',
     'OSError',
-    # OSError subclasses raised by `open()` and the other filesystem calls
     'FileExistsError',
     'FileNotFoundError',
     'IsADirectoryError',
