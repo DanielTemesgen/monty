@@ -285,11 +285,54 @@ pub(crate) trait PyTrait<'h>: PyObjectIdentity {
     /// (`list indices must be integers`, `cannot be interpreted as an integer`,
     /// `slice indices must be...`), which is why it is not raised here.
     ///
-    /// The returned value is always a real `int` (`Int`/`Bool`/`LongInt`), so a
-    /// caller may narrow it — or recurse once through its own int arms — without
+    /// The returned value is always a real `int` (`Int`/`InternLongInt`/heap `LongInt`),
+    /// with `bool` normalized to `Int`, so a caller may narrow it without
     /// re-entering the protocol. Out-of-range policy stays with the caller,
     /// since `as_int` and `as_index` disagree on it.
     fn py_index_impl(&self, _vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        Ok(None)
+    }
+
+    /// Python absolute value (`__abs__`); `None` means the operation is absent.
+    fn py_abs_impl(&self, _vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        Ok(None)
+    }
+
+    /// Python bitwise inversion (`__invert__`); `None` means the operation is absent.
+    fn py_invert_impl(&self, _vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        Ok(None)
+    }
+
+    /// Python rounding (`__round__`), receiving the uncoerced precision argument.
+    /// `None` means no precision was supplied; `Ok(None)` means no rounding hook.
+    fn py_round_impl(&self, _ndigits: Option<&Value>, _vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        Ok(None)
+    }
+
+    /// Integer conversion (`__int__`), returning a real integer or no hook.
+    /// The caller supplies the `__index__` fallback and string parsing.
+    fn py_int_impl(&self, _vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        Ok(None)
+    }
+
+    /// Float conversion (`__float__`), validating the result before unwrapping it.
+    /// The caller supplies the `__index__` fallback and string parsing.
+    fn py_float_impl(&self, _vm: &mut VM<'h>) -> RunResult<Option<f64>> {
+        Ok(None)
+    }
+
+    /// Python floor (`__floor__`); user hooks may return any Python value.
+    fn py_floor_impl(&self, _vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        Ok(None)
+    }
+
+    /// Python ceiling (`__ceil__`); user hooks may return any Python value.
+    fn py_ceil_impl(&self, _vm: &mut VM<'h>) -> RunResult<Option<Value>> {
+        Ok(None)
+    }
+
+    /// Python truncation (`__trunc__`); user hooks may return any Python value.
+    fn py_trunc_impl(&self, _vm: &mut VM<'h>) -> RunResult<Option<Value>> {
         Ok(None)
     }
 
@@ -681,21 +724,19 @@ pub(crate) trait PyTrait<'h>: PyObjectIdentity {
     /// Whether `next()` can drive this object, the counterpart to
     /// [`py_is_iterable`](PyTrait::py_is_iterable)'s "can `iter()` be called".
     ///
-    /// Mirrors CPython's `PyIter_Check`, used by `PyObject_GetIter` to reject an
-    /// `__iter__` returning a non-iterator — the one caller here, in
-    /// `Instance::py_iter`. A type overriding `py_next` MUST return `true`, or
-    /// a user `__iter__` returning it is wrongly rejected.
+    /// Rejects a user `__iter__` returning a non-iterator, like CPython's `PyIter_Check`.
+    /// A type overriding `py_next` must return `true` or its instances will be rejected.
     fn py_is_iterator(&self, _vm: &VM<'h>) -> bool {
         false
     }
 
-    /// Returns a Python iterator for this object (`__iter__`).
-    fn py_iter(&self, vm: &mut VM<'h>) -> RunResult<Value> {
+    /// Invokes `__iter__`; use `Value::py_iter` to also validate a user method's eventual result.
+    fn py_iter(&self, vm: &mut VM<'h>) -> RunResult<CallResult> {
         Err(ExcType::type_error_not_iterable(&self.py_type_name(vm)))
     }
 
-    /// Advances this object using Python's iterator protocol (`__next__`).
-    ///
+    /// Advances an iterator synchronously for Rust consumers.
+    /// Public `next()` dispatches user methods separately so they can suspend.
     fn py_next(&mut self, vm: &mut VM<'h>) -> RunResult<Option<Value>> {
         Err(ExcType::type_error_not_iterator(&self.py_type_name(vm)))
     }

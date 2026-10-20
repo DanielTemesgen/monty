@@ -7,7 +7,7 @@ use std::{
 };
 
 use num_bigint::{BigInt, Sign};
-use num_traits::ToPrimitive;
+use num_traits::{Signed, ToPrimitive};
 use serde::de::Error as _;
 use smallvec::smallvec;
 
@@ -33,10 +33,13 @@ use crate::{
         host_class_type,
         instance::{class_defines, instance_dataclass_eq, instance_getattr, instance_str, instance_user_eq},
         long_int::{
-            bigint_cmp_f64, bigint_cmp_i64, bigint_divmod_tuple, bigint_eq_f64, bigint_eq_i64, bigint_true_divide,
-            check_bits_str_digits_limit, i64_cmp_f64, modular_pow, repeat_count, wide_i128_into_value,
+            bigint_cmp_f64, bigint_cmp_i64, bigint_divmod_tuple, bigint_eq_f64, bigint_eq_i64, bigint_to_f64_checked,
+            bigint_true_divide, check_bits_str_digits_limit, i64_cmp_f64, modular_pow, repeat_count,
+            wide_i128_into_value,
         },
+        lru_cache::lru_cache_repr,
         namedtuple::cmp_item_seqs,
+        numeric::{round_bigint, round_digits, round_float, round_int},
         slice::slice_collect_iterator,
         str::{
             allocate_char, allocate_string, concat_allocate_str, copy_format_template, get_char_at_index, repeat_str,
@@ -543,6 +546,11 @@ impl<'h> PyTrait<'h> for Value {
                         // Other types don't typically have cycles, but handle gracefully
                         _ => Ok(f.write_str("...")?),
                     }
+                } else if matches!(vm.heap.get(*id), HeapData::LruCache(_)) {
+                    // Handled here for the same reason as an instance: the
+                    // address in the repr is the heap id, which is only
+                    // available at the `Value` level.
+                    lru_cache_repr(*id, f)
                 } else if matches!(vm.heap.get(*id), HeapData::Instance(_)) {
                     // Instances manage their own recursion state: synthesized
                     // dataclass reprs use `heap_ids`, while a user `__repr__`
@@ -649,8 +657,105 @@ impl<'h> PyTrait<'h> for Value {
         match self {
             // `bool` is an `int` subclass in CPython, so it satisfies the
             // protocol directly rather than through a dunder.
-            Self::Int(_) | Self::Bool(_) | Self::InternLongInt(_) => Ok(Some(self.clone_with_heap(vm.heap))),
+            Self::Int(_) | Self::InternLongInt(_) => Ok(Some(self.clone_with_heap(vm.heap))),
+            Self::Bool(b) => Ok(Some(Self::Int(i64::from(*b)))),
             Self::Ref(id) => vm.heap.read(*id).py_index_impl(vm),
+            _ => Ok(None),
+        }
+    }
+
+    fn py_abs_impl(&self, vm: &mut VM<'_>) -> RunResult<Option<Self>> {
+        match self {
+            Self::Int(n) => Ok(Some(match n.checked_abs() {
+                Some(n) => Self::Int(n),
+                None => LongInt::from(*n).abs().into_value(vm.heap),
+            })),
+            Self::Bool(b) => Ok(Some(Self::Int(i64::from(*b)))),
+            Self::Float(f) => Ok(Some(Self::Float(f.abs()))),
+            Self::InternLongInt(id) => Ok(Some(
+                LongInt::new(vm.interns.get_long_int(*id).abs()).into_value(vm.heap),
+            )),
+            Self::Ref(id) => vm.heap.read(*id).py_abs_impl(vm),
+            _ => Ok(None),
+        }
+    }
+
+    fn py_invert_impl(&self, vm: &mut VM<'_>) -> RunResult<Option<Self>> {
+        match self {
+            Self::Int(n) => Ok(Some(Self::Int(!n))),
+            Self::Bool(b) => Ok(Some(Self::Int(!i64::from(*b)))),
+            Self::InternLongInt(id) => Ok(Some(LongInt::new(!vm.interns.get_long_int(*id)).into_value(vm.heap))),
+            Self::Ref(id) => vm.heap.read(*id).py_invert_impl(vm),
+            _ => Ok(None),
+        }
+    }
+
+    fn py_round_impl(&self, ndigits: Option<&Self>, vm: &mut VM<'_>) -> RunResult<Option<Self>> {
+        match self {
+            Self::Int(n) => {
+                let digits = round_digits(ndigits, vm)?;
+                Ok(Some(round_int(*n, digits, vm.heap)))
+            }
+            Self::Bool(b) => Self::Int(i64::from(*b)).py_round_impl(ndigits, vm),
+            Self::Float(f) => {
+                let digits = round_digits(ndigits, vm)?;
+                round_float(*f, digits, vm.heap).map(Some)
+            }
+            Self::InternLongInt(id) => {
+                let digits = round_digits(ndigits, vm)?;
+                Ok(Some(match digits {
+                    Some(d) if d < 0 => round_bigint(vm.interns.get_long_int(*id), d.unsigned_abs(), vm.heap),
+                    _ => self.clone_with_heap(vm.heap),
+                }))
+            }
+            Self::Ref(id) => vm.heap.read(*id).py_round_impl(ndigits, vm),
+            _ => Ok(None),
+        }
+    }
+
+    fn py_int_impl(&self, vm: &mut VM<'_>) -> RunResult<Option<Self>> {
+        match self {
+            Self::Int(_) | Self::InternLongInt(_) => Ok(Some(self.clone_with_heap(vm.heap))),
+            Self::Bool(b) => Ok(Some(Self::Int(i64::from(*b)))),
+            Self::Float(f) => LongInt::value_from_f64(*f, vm.heap).map(Some),
+            Self::Ref(id) => vm.heap.read(*id).py_int_impl(vm),
+            _ => Ok(None),
+        }
+    }
+
+    fn py_float_impl(&self, vm: &mut VM<'_>) -> RunResult<Option<f64>> {
+        match self {
+            Self::Int(n) => Ok(Some(*n as f64)),
+            Self::Bool(b) => Ok(Some(f64::from(*b))),
+            Self::Float(f) => Ok(Some(*f)),
+            Self::InternLongInt(id) => bigint_to_f64_checked(vm.interns.get_long_int(*id)).map(Some),
+            Self::Ref(id) => vm.heap.read(*id).py_float_impl(vm),
+            _ => Ok(None),
+        }
+    }
+
+    fn py_floor_impl(&self, vm: &mut VM<'_>) -> RunResult<Option<Self>> {
+        match self {
+            Self::Int(_) | Self::Bool(_) | Self::InternLongInt(_) => self.py_int_impl(vm),
+            Self::Float(f) => LongInt::value_from_f64(f.floor(), vm.heap).map(Some),
+            Self::Ref(id) => vm.heap.read(*id).py_floor_impl(vm),
+            _ => Ok(None),
+        }
+    }
+
+    fn py_ceil_impl(&self, vm: &mut VM<'_>) -> RunResult<Option<Self>> {
+        match self {
+            Self::Int(_) | Self::Bool(_) | Self::InternLongInt(_) => self.py_int_impl(vm),
+            Self::Float(f) => LongInt::value_from_f64(f.ceil(), vm.heap).map(Some),
+            Self::Ref(id) => vm.heap.read(*id).py_ceil_impl(vm),
+            _ => Ok(None),
+        }
+    }
+
+    fn py_trunc_impl(&self, vm: &mut VM<'_>) -> RunResult<Option<Self>> {
+        match self {
+            Self::Int(_) | Self::Bool(_) | Self::Float(_) | Self::InternLongInt(_) => self.py_int_impl(vm),
+            Self::Ref(id) => vm.heap.read(*id).py_trunc_impl(vm),
             _ => Ok(None),
         }
     }
@@ -1385,13 +1490,13 @@ impl<'h> PyTrait<'h> for Value {
         }
     }
 
-    fn py_iter(&self, vm: &mut VM<'_>) -> RunResult<Self> {
+    fn py_iter(&self, vm: &mut VM<'_>) -> RunResult<CallResult> {
         if let Self::Ref(id) = self {
             vm.heap.read(*id).py_iter(vm)
         } else {
             match self {
-                Self::InternString(id) => Ok(StringIterator::from_intern(*id, vm)),
-                Self::InternBytes(id) => Ok(BytesIterator::from_intern(*id, vm)),
+                Self::InternString(id) => Ok(CallResult::Value(StringIterator::from_intern(*id, vm))),
+                Self::InternBytes(id) => Ok(CallResult::Value(BytesIterator::from_intern(*id, vm))),
                 _ => Err(ExcType::type_error_not_iterable(&self.py_type_name(vm))),
             }
         }
@@ -1608,12 +1713,13 @@ impl Value {
         }
     }
 
-    /// Returns an iterator for this value using its type-specific protocol when available.
-    pub fn py_iter(&self, vm: &mut VM<'_>) -> RunResult<Self> {
+    /// Acquires and validates an iterator, allowing user `__iter__` methods to suspend.
+    /// Rust consumers which cannot yield must explicitly require synchronous completion.
+    pub fn py_iter(&self, vm: &mut VM<'_>) -> RunResult<CallResult> {
         <Self as PyTrait<'_>>::py_iter(self, vm)
     }
 
-    /// Advances this value as an iterator, mirroring the inherent [`Value::py_iter`].
+    /// Advances this value synchronously for native iterator consumers.
     pub(crate) fn py_next(&mut self, vm: &mut VM<'_>) -> RunResult<Option<Self>> {
         <Self as PyTrait<'_>>::py_next(self, vm)
     }
@@ -1621,8 +1727,8 @@ impl Value {
     /// Converts an owned value into its Python iterator and releases the original reference.
     ///
     /// This is the ownership-preserving entry point for Rust consumers of the
-    /// iteration protocol; the returned iterator retains its source as needed.
-    pub(crate) fn into_py_iter(self, vm: &mut VM<'_>) -> RunResult<Self> {
+    /// iteration protocol; the pending call or resulting iterator retains its source as needed.
+    pub(crate) fn into_py_iter(self, vm: &mut VM<'_>) -> RunResult<CallResult> {
         let iterator = self.py_iter(vm);
         self.drop_with(vm);
         iterator
@@ -1731,7 +1837,7 @@ impl Value {
     /// Only called for values already known to be iterable, so it does not
     /// re-check. An endless iterable runs until a resource limit fires.
     fn contains_by_iteration(&self, item: &Self, vm: &mut VM<'_>) -> RunResult<bool> {
-        let iter = self.py_iter(vm)?;
+        let iter = self.py_iter(vm)?.require_synchronous(vm)?;
         defer_drop!(iter, vm);
         let mut iter = iter.read(vm);
         loop {
@@ -1816,6 +1922,40 @@ impl Value {
     /// reached via deserialization of crafted snapshot data.
     pub fn as_int(&self, vm: &mut VM<'_>) -> RunResult<i64> {
         self.as_int_with_overflow(vm, ExcType::overflow_c_ssize_t)
+    }
+
+    /// Returns an owned integer through `__index__` without narrowing its magnitude.
+    pub(crate) fn py_index(&self, vm: &mut VM<'_>) -> RunResult<Self> {
+        self.py_index_impl(vm)?
+            .ok_or_else(|| ExcType::type_error_not_integer(&self.py_type_name(vm)))
+    }
+
+    /// Converts an index to `i64`, saturating rather than raising on overflow.
+    pub(crate) fn saturating_index(&self, vm: &mut VM<'_>) -> RunResult<i64> {
+        let index = self.py_index(vm)?;
+        defer_drop!(index, vm);
+        Ok(match index {
+            Self::Int(n) => *n,
+            Self::Bool(b) => i64::from(*b),
+            _ => {
+                let n = index.as_long_int(vm).expect("py_index returned an integer");
+                n.to_i64()
+                    .unwrap_or_else(|| if n.is_negative() { i64::MIN } else { i64::MAX })
+            }
+        })
+    }
+
+    /// Numeric float conversion, trying `__float__` before `__index__`.
+    /// Leaves unsupported-type errors to the consumer and never parses strings.
+    pub(crate) fn py_float(&self, vm: &mut VM<'_>) -> RunResult<Option<f64>> {
+        if let Some(value) = self.py_float_impl(vm)? {
+            Ok(Some(value))
+        } else if let Some(index) = self.py_index_impl(vm)? {
+            defer_drop!(index, vm);
+            index.py_float_impl(vm)
+        } else {
+            Ok(None)
+        }
     }
 
     /// [`Self::as_int`] with a caller-chosen overflow error.
