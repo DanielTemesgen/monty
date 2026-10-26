@@ -16,11 +16,12 @@ use crate::{
         itertools,
         itertools::ItertoolsFunctions,
     },
+    py_value::PyValue,
     types::{
         Bytes, Deque, Dict, FrozenSet, GenericAlias, List, LongInt, Partial, Path, PyTrait, Random, Range, Set, Slice,
         Str, TimeZone, Tuple,
         bytes::{bytes_fromhex, bytes_repr},
-        complex, date, datetime,
+        complex, date, datetime, decimal,
         dict::{DictKind, dict_fromkeys},
         instance::class_name,
         long_int::INT_MAX_STR_DIGITS,
@@ -324,6 +325,19 @@ pub enum Type {
     /// A resolved `csv` dialect, CPython's `_csv.Dialect`.
     #[strum(serialize = "_csv.Dialect")]
     CsvDialect,
+    /// `decimal.Decimal`.
+    #[strum(serialize = "decimal.Decimal")]
+    Decimal,
+    /// `decimal.Context`.
+    #[strum(serialize = "decimal.Context")]
+    DecimalContext,
+    /// The type of a context's `flags` / `traps`; CPython defines it in Python, so
+    /// its name carries no module.
+    #[strum(serialize = "SignalDict")]
+    DecimalSignalDict,
+    /// The manager `decimal.localcontext()` returns.
+    #[strum(serialize = "decimal.ContextManager")]
+    DecimalContextManager,
 }
 
 /// Writes the canonical static name of every non-[`Instance`](Type::Instance)
@@ -478,6 +492,15 @@ impl Type {
                 // The one `itertools` type CPython gives a
                 // `__class_getitem__`; the rest reject a subscript.
                 | Self::ItertoolsChain
+        )
+    }
+
+    /// Whether multiplication can fall back to CPython's sequence-repetition protocol.
+    #[must_use]
+    pub(crate) const fn has_sequence_repeat(self) -> bool {
+        matches!(
+            self,
+            Self::Str | Self::Bytes | Self::List | Self::Tuple | Self::NamedTuple | Self::Deque
         )
     }
 
@@ -640,6 +663,12 @@ impl Type {
             (Self::Bytes, Some(StaticStrings::Fromhex)) => bytes_fromhex(args, vm).map(CallResult::Value),
             (Self::Complex, Some(StaticStrings::FromNumber)) => {
                 complex::class_from_number(vm, args).map(CallResult::Value)
+            }
+            (Self::Decimal, Some(StaticStrings::FromNumber)) => {
+                decimal::py::class_from_number(vm, args).map(CallResult::Value)
+            }
+            (Self::Decimal, _) if vm.interns.get_str(method_id) == "from_float" => {
+                decimal::py::class_from_float(vm, args).map(CallResult::Value)
             }
             (Self::Date, Some(StaticStrings::Today)) => date::class_today(vm, args),
             (Self::Path, Some(StaticStrings::Cwd)) => path::class_cwd(vm, args).map(CallResult::Value),
@@ -830,6 +859,8 @@ impl Type {
             Self::CsvDictReader => csv::dict_reader_init(vm, args),
             Self::CsvDictWriter => csv::dict_writer_init(vm, args),
             Self::CsvDialect => csv::dialect_init(vm, args),
+            Self::Decimal => decimal::py::init(vm, args),
+            Self::DecimalContext => decimal::py_context::init(vm, args),
 
             // Primitive types - inline implementation
             Self::Int => int_init(vm, args),
@@ -868,7 +899,10 @@ impl Type {
             }
 
             // Non-callable types - raise TypeError
-            _ => Err(ExcType::type_error_not_callable(&self.name(vm.heap, vm.interns))),
+            _ => {
+                args.drop_with(vm.heap);
+                Err(ExcType::type_error_not_callable(&self.name(vm.heap, vm.interns)))
+            }
         }
     }
 }
@@ -990,15 +1024,9 @@ fn int_convert(x: &Value, vm: &mut VM<'_>) -> RunResult<Value> {
     } else if let Some(value) = x.py_index_impl(vm)? {
         Ok(value)
     } else {
-        let interns = vm.interns;
-        match x {
-            Value::InternString(string_id) => parse_int_from_str(interns.get_str(*string_id), 10, vm.heap),
-            Value::InternBytes(bytes_id) => parse_int_from_bytes(interns.get_bytes(*bytes_id), 10, vm.heap),
-            Value::Ref(heap_id) => match vm.heap.get(*heap_id) {
-                HeapData::Str(s) => parse_int_from_str(s.as_str(), 10, vm.heap),
-                HeapData::Bytes(b) => parse_int_from_bytes(b.as_slice(), 10, vm.heap),
-                _ => Err(ExcType::type_error_int_conversion(&x.py_type_name(vm))),
-            },
+        match x.py_value(vm) {
+            PyValue::Str(value) => parse_int_from_str(value.as_str(vm), 10, vm.heap),
+            PyValue::Bytes(value) => parse_int_from_bytes(value.as_slice(vm), 10, vm.heap),
             _ => Err(ExcType::type_error_int_conversion(&x.py_type_name(vm))),
         }
     }

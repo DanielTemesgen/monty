@@ -66,6 +66,12 @@ reveal_type(datetime.datetime(2024, 1, 15, 12, 30))
 reveal_type(datetime.timedelta(days=1))
 reveal_type(datetime.timezone.utc)
 
+# === decimal ===
+# `localcontext` takes a list of signals for `traps` and `flags`, as the runtime does
+import decimal  # noqa: E402
+
+reveal_type(decimal.localcontext(traps=[decimal.Inexact], flags=[decimal.Rounded]))
+
 # fmt: off
 # === open ===
 from pathlib import Path  # noqa: E402, I001
