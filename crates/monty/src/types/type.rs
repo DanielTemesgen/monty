@@ -865,7 +865,6 @@ impl Type {
             // Primitive types - inline implementation
             Self::Int => int_init(vm, args),
             Self::Float => {
-                let interns = vm.interns;
                 let Some(v) = args.get_zero_one_arg("float", vm.heap)? else {
                     return Ok(Value::Float(0.0));
                 };
@@ -873,13 +872,9 @@ impl Type {
                 if let Some(value) = v.py_float(vm)? {
                     Ok(Value::Float(value))
                 } else {
-                    match v {
-                        Value::InternString(string_id) => {
-                            Ok(Value::Float(parse_f64_from_str(interns.get_str(*string_id))?))
-                        }
-                        Value::Ref(heap_id) if let HeapData::Str(s) = vm.heap.get(*heap_id) => {
-                            Ok(Value::Float(parse_f64_from_str(s.as_str())?))
-                        }
+                    match v.py_value(vm) {
+                        PyValue::Str(value) => Ok(Value::Float(parse_f64_from_str(value.as_str(vm))?)),
+                        PyValue::Bytes(value) => Ok(Value::Float(parse_f64_from_bytes(value.as_slice(vm))?)),
                         _ => Err(ExcType::type_error_float_conversion(&v.py_type_name(vm))),
                     }
                 }
@@ -914,13 +909,27 @@ impl Type {
 /// - The special values `inf`, `-inf`, `infinity`, and `nan` (case-insensitive)
 /// - Underscore digit separators, strictly between two digits (`1_000.5`, `1e1_0`)
 pub(crate) fn parse_f64_from_str(value: &str) -> RunResult<f64> {
+    parse_f64(value).ok_or_else(|| value_error_could_not_convert_string_to_float(StringRepr(value)))
+}
+
+/// Parses ASCII bytes without accepting Unicode digits or whitespace encoded as UTF-8.
+fn parse_f64_from_bytes(value: &[u8]) -> RunResult<f64> {
+    str::from_utf8(value)
+        .ok()
+        .filter(|text| text.is_ascii())
+        .and_then(parse_f64)
+        .ok_or_else(|| value_error_could_not_convert_string_to_float(bytes_repr(value)))
+}
+
+/// Parses shared float syntax without constructing the caller-specific error.
+fn parse_f64(value: &str) -> Option<f64> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
-        return Err(value_error_could_not_convert_string_to_float(value));
+        return None;
     }
     let stripped;
     let trimmed = if trimmed.contains('_') {
-        stripped = strip_underscores(trimmed).ok_or_else(|| value_error_could_not_convert_string_to_float(value))?;
+        stripped = strip_underscores(trimmed)?;
         stripped.as_str()
     } else {
         trimmed
@@ -932,12 +941,10 @@ pub(crate) fn parse_f64_from_str(value: &str) -> RunResult<f64> {
         "-inf" | "-infinity" => f64::NEG_INFINITY,
         "nan" | "+nan" => f64::NAN,
         "-nan" => -f64::NAN,
-        _ => trimmed
-            .parse::<f64>()
-            .map_err(|_| value_error_could_not_convert_string_to_float(value))?,
+        _ => trimmed.parse::<f64>().ok()?,
     };
 
-    Ok(parsed)
+    Some(parsed)
 }
 
 /// Removes digit-separator underscores, or returns `None` when one is not
@@ -959,13 +966,11 @@ pub(crate) fn strip_underscores(text: &str) -> Option<String> {
     Some(out)
 }
 
-/// Creates the `ValueError` raised by `float()` when a string cannot be parsed.
-///
-/// Matches CPython's message format: `could not convert string to float: '...'`.
-fn value_error_could_not_convert_string_to_float(value: &str) -> RunError {
+/// Creates a `float()` ValueError using the original str/bytes argument's Python representation.
+fn value_error_could_not_convert_string_to_float(value: impl fmt::Display) -> RunError {
     SimpleException::new_msg(
         ExcType::ValueError,
-        format!("could not convert string to float: {}", StringRepr(value)),
+        format!("could not convert string to float: {value}"),
     )
     .into()
 }
